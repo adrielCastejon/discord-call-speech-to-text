@@ -6,6 +6,7 @@ if [[ ! -f transcrever.pid ]]; then
   exit 0
 fi
 pid="$(cat transcrever.pid)"
+: > parar.pedido
 if kill -0 "$pid" 2>/dev/null; then
   kill "$pid"
   for _ in 1 2 3 4 5 6 7 8 9 10; do
@@ -21,4 +22,4 @@ if kill -0 "$pid" 2>/dev/null; then
 else
   echo "O processo já tinha terminado."
 fi
-rm -f transcrever.pid
+rm -f transcrever.pid parar.pedido

@@ -6,20 +6,20 @@ from __future__ import annotations
 import argparse
 import faulthandler
 import os
-import select
 import signal
-import subprocess
 import sys
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
 import numpy as np
 
+from captura import capture_loop
+
 SR = 16000
-BYTES_PER_SAMPLE = 2
 
 GARBAGE = (
     "amara.org",
@@ -63,8 +63,43 @@ def cublas_directories() -> list[Path]:
     return directories
 
 
+def windows_cuda_directories() -> list[Path]:
+    directories = [
+        Path(sys.prefix) / "Lib" / "site-packages" / "nvidia" / "cublas" / "bin",
+        Path(sys.prefix) / "Lib" / "site-packages" / "nvidia" / "cudnn" / "bin",
+        Path(sys.prefix) / "Library" / "bin",
+    ]
+    conda_prefix = os.environ.get("CONDA_PREFIX")
+    if conda_prefix:
+        directories.append(Path(conda_prefix) / "Library" / "bin")
+    cuda_path = os.environ.get("CUDA_PATH")
+    if cuda_path:
+        directories.append(Path(cuda_path) / "bin")
+    home = Path.home()
+    for base in (home / "anaconda3" / "envs", home / "miniconda3" / "envs"):
+        if base.is_dir():
+            directories.extend(path / "Library" / "bin" for path in base.iterdir() if path.is_dir())
+    return directories
+
+
+def ensure_windows_cuda_dlls() -> None:
+    """No Windows, o carregador de DLL não olha LD_LIBRARY_PATH."""
+    found = [path for path in windows_cuda_directories() if path.is_dir() and any(path.glob("cublas*.dll"))]
+    if not found:
+        return
+    for path in found:
+        try:
+            os.add_dll_directory(str(path))
+        except (AttributeError, OSError):
+            pass
+    os.environ["PATH"] = os.pathsep.join([str(path) for path in found] + [os.environ.get("PATH", "")])
+
+
 def ensure_cuda_libraries() -> None:
-    """CTranslate2 loads libcublas.so.12 at runtime. Re-exec once so the linker sees it."""
+    """CTranslate2 loads libcublas at runtime. Make that library visible before import."""
+    if sys.platform == "win32":
+        ensure_windows_cuda_dlls()
+        return
     chosen = next((path for path in cublas_directories() if (path / "libcublas.so.12").exists()), None)
     if chosen is None:
         return
@@ -74,81 +109,6 @@ def ensure_cuda_libraries() -> None:
         return
     os.environ["LD_LIBRARY_PATH"] = ":".join([chosen_str, *parts])
     os.execv(sys.executable, [sys.executable, *sys.argv])
-
-
-def run_pactl(args: list[str]) -> str:
-    return subprocess.check_output(["pactl", *args], text=True, stderr=subprocess.DEVNULL)
-
-
-def pulse_blocks(kind: str) -> list[str]:
-    text = run_pactl(["list", kind])
-    blocks: list[str] = []
-    current: list[str] = []
-    for line in text.splitlines():
-        if line.startswith("Sink Input #") or line.startswith("Source Output #"):
-            if current:
-                blocks.append("\n".join(current))
-            current = [line]
-        else:
-            if current:
-                current.append(line)
-    if current:
-        blocks.append("\n".join(current))
-    return blocks
-
-
-def block_index(block: str) -> str:
-    return block.splitlines()[0].split("#", 1)[1].strip()
-
-
-def block_field(block: str, prefix: str) -> str | None:
-    for line in block.splitlines():
-        stripped = line.strip()
-        if stripped.startswith(prefix):
-            return stripped.split(":", 1)[1].strip()
-    return None
-
-
-def is_discord_playback(block: str) -> bool:
-    return "Discord" in block and "playStream" in block
-
-
-def is_discord_mic(block: str) -> bool:
-    return "Discord" in block and "recStream" in block
-
-
-def source_name(index: str) -> str | None:
-    for line in run_pactl(["list", "short", "sources"]).splitlines():
-        parts = line.split("\t")
-        if parts and parts[0] == index:
-            return parts[1]
-    return None
-
-
-def find_discord_playback() -> str | None:
-    for block in pulse_blocks("sink-inputs"):
-        if is_discord_playback(block):
-            return block_index(block)
-    return None
-
-
-def find_discord_mic() -> str:
-    for block in pulse_blocks("source-outputs"):
-        if is_discord_mic(block):
-            source_index = block_field(block, "Source:")
-            if source_index:
-                name = source_name(source_index)
-                if name:
-                    return name
-    return "@DEFAULT_SOURCE@"
-
-
-def sink_input_alive(index: str) -> bool:
-    try:
-        text = run_pactl(["list", "short", "sink-inputs"])
-    except subprocess.CalledProcessError:
-        return False
-    return any(line.split("\t", 1)[0] == index for line in text.splitlines() if line.strip())
 
 
 def usable_text(text: str) -> str | None:
@@ -172,7 +132,8 @@ class Channel:
     autogain: bool
     parts: list[tuple[float, np.ndarray]] = field(default_factory=list)
     lock: threading.Lock = field(default_factory=threading.Lock)
-    proc: subprocess.Popen | None = None
+    proc: object | None = None
+    closer: Callable[[], None] | None = None
     connected: bool = False
     last_rms: float = 0.0
     samples_pending: int = 0
@@ -227,39 +188,46 @@ class Log:
         self.path = directory / f"chamada-{stamp}.txt"
         self._fh = self.path.open("a", encoding="utf-8", buffering=1)
         self._lock = threading.Lock()
+        self._mirror = None
         current = directory / "atual.txt"
-        if current.is_symlink() or current.exists():
-            current.unlink()
-        current.symlink_to(self.path.name)
+        try:
+            if current.is_symlink() or current.exists():
+                current.unlink()
+            current.symlink_to(self.path.name)
+        except OSError:
+            self._mirror = current.open("a", encoding="utf-8", buffering=1)
+
+    def _record(self, text: str) -> None:
+        self._fh.write(text)
+        self._fh.flush()
+        os.fsync(self._fh.fileno())
+        if self._mirror is not None:
+            self._mirror.write(text)
+            self._mirror.flush()
+            os.fsync(self._mirror.fileno())
 
     def write(self, when: datetime, label: str, text: str) -> None:
         line = f"[{when.strftime('%H:%M:%S')}] {label}: {text}"
         with self._lock:
-            self._fh.write(line + "\n")
-            self._fh.flush()
-            os.fsync(self._fh.fileno())
+            self._record(line + "\n")
         print(line, flush=True)
 
     def note(self, text: str) -> None:
         when = datetime.now()
         line = f"[{when.strftime('%H:%M:%S')}] -- {text}"
         with self._lock:
-            self._fh.write(line + "\n")
-            self._fh.flush()
-            os.fsync(self._fh.fileno())
+            self._record(line + "\n")
         print(line, flush=True)
 
     def header(self, lines: list[str]) -> None:
         with self._lock:
-            for line in lines:
-                self._fh.write(line + "\n")
-            self._fh.write("\n")
-            self._fh.flush()
-            os.fsync(self._fh.fileno())
+            self._record("".join(line + "\n" for line in lines) + "\n")
 
     def close(self) -> None:
         with self._lock:
             self._fh.close()
+            if self._mirror is not None:
+                self._mirror.close()
 
 
 def prepare_audio(audio: np.ndarray, autogain: bool) -> np.ndarray:
@@ -310,94 +278,6 @@ def transcribe_chunk(model, audio: np.ndarray, language: str, beam_size: int):
         without_timestamps=False,
     )
     return list(segments)
-
-
-def parecord_command(extra: list[str]) -> list[str]:
-    command = [
-        "parecord",
-        "--raw",
-        "--rate=16000",
-        "--format=s16le",
-        "--channels=1",
-        "--latency-msec=60",
-        "--client-name=Transcricao da chamada",
-        *extra,
-    ]
-    if Path("/usr/bin/stdbuf").exists():
-        return ["stdbuf", "-o0", *command]
-    return command
-
-
-def capture_loop(channel: Channel, stop: threading.Event, mode: str) -> None:
-    while not stop.is_set():
-        try:
-            if mode == "discord":
-                stream_index = find_discord_playback()
-                if not stream_index:
-                    if channel.connected:
-                        channel.connected = False
-                    time.sleep(1.0)
-                    continue
-                command = parecord_command(
-                    ["--stream-name=stt-discord", "--monitor-stream", stream_index]
-                )
-                watch_index = stream_index
-            else:
-                mic = find_discord_mic()
-                command = parecord_command(["--stream-name=stt-mic", "--device", mic])
-                watch_index = None
-        except Exception as exc:
-            print(f"[{channel.label}] erro ao achar o áudio: {exc}", flush=True)
-            time.sleep(1.0)
-            continue
-        leftover = b""
-
-        proc = subprocess.Popen(
-            command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            bufsize=0,
-        )
-        channel.proc = proc
-        channel.connected = True
-        next_check = time.time() + 2.0
-        try:
-            assert proc.stdout is not None
-            fd = proc.stdout.fileno()
-            while not stop.is_set():
-                ready, _, _ = select.select([fd], [], [], 1.0)
-                if watch_index and time.time() >= next_check:
-                    next_check = time.time() + 2.0
-                    if proc.poll() is not None or not sink_input_alive(watch_index):
-                        break
-                if not ready:
-                    if proc.poll() is not None:
-                        break
-                    continue
-                data = os.read(fd, SR * BYTES_PER_SAMPLE)
-                if not data:
-                    break
-                raw = leftover + data
-                if len(raw) % 2:
-                    leftover = raw[-1:]
-                    raw = raw[:-1]
-                else:
-                    leftover = b""
-                if not raw:
-                    continue
-                samples = np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0
-                channel.append(samples, time.time())
-        finally:
-            if proc.poll() is None:
-                proc.terminate()
-                try:
-                    proc.wait(timeout=1)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-            channel.proc = None
-            channel.connected = False
-        if not stop.is_set():
-            time.sleep(0.4)
 
 
 def emit_audio(
@@ -520,6 +400,24 @@ def remove_pid(path: Path) -> None:
         pass
 
 
+def release_channel(channel: Channel) -> None:
+    proc = channel.proc
+    if proc is not None and getattr(proc, "poll", lambda: 0)() is None:
+        terminate = getattr(proc, "terminate", None)
+        if terminate is not None:
+            try:
+                terminate()
+            except Exception:
+                pass
+    closer = channel.closer
+    channel.closer = None
+    if closer is not None:
+        try:
+            closer()
+        except Exception:
+            pass
+
+
 def main() -> int:
     faulthandler.enable(all_threads=True)
     ensure_cuda_libraries()
@@ -528,21 +426,33 @@ def main() -> int:
     os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
     log = Log(Path(args.log_dir))
     stop = threading.Event()
+    stop_request = script_dir() / "parar.pedido"
 
     def request_stop(_signum=None, _frame=None) -> None:
         stop.set()
 
-    signal.signal(signal.SIGINT, request_stop)
-    signal.signal(signal.SIGTERM, request_stop)
+    for sig in (signal.SIGINT, getattr(signal, "SIGTERM", None), getattr(signal, "SIGBREAK", None)):
+        if sig is None:
+            continue
+        try:
+            signal.signal(sig, request_stop)
+        except (ValueError, OSError):
+            pass
 
     mic = Channel("eu", autogain=True)
     discord = Channel("discord", autogain=False)
+    if sys.platform == "win32":
+        origem_mic = "# eu = microfone padrão do Windows"
+        origem_discord = "# discord = áudio do processo Discord; se o isolamento falhar, o áudio dos alto-falantes"
+    else:
+        origem_mic = "# eu = microfone usado pelo Discord"
+        origem_discord = "# discord = áudio da chamada que você está ouvindo"
     log.header(
         [
             "# Transcrição da chamada",
             f"# início: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-            "# eu = microfone usado pelo Discord",
-            "# discord = áudio da chamada que você está ouvindo",
+            origem_mic,
+            origem_discord,
             "# as falas das outras pessoas ficam juntas na linha discord",
         ]
     )
@@ -561,8 +471,7 @@ def main() -> int:
         log.note(f"erro ao carregar o modelo: {exc}")
         stop.set()
         for channel in (mic, discord):
-            if channel.proc is not None and channel.proc.poll() is None:
-                channel.proc.terminate()
+            release_channel(channel)
         log.close()
         remove_pid(pid_path)
         return 1
@@ -575,6 +484,13 @@ def main() -> int:
     next_status = time.time() + 8
     try:
         while not stop.is_set():
+            if stop_request.exists():
+                try:
+                    stop_request.unlink()
+                except OSError:
+                    pass
+                stop.set()
+                break
             if discord.connected and not discord_was_up:
                 log.note("áudio do Discord conectado")
                 discord_was_up = True
@@ -611,8 +527,7 @@ def main() -> int:
     finally:
         stop.set()
         for channel in (mic, discord):
-            if channel.proc is not None and channel.proc.poll() is None:
-                channel.proc.terminate()
+            release_channel(channel)
         for channel in (mic, discord):
             while channel.pending_seconds() >= 0.4:
                 before = channel.pending_seconds()
