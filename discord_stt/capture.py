@@ -1,4 +1,4 @@
-"""Captura o microfone e o áudio do Discord no Linux e no Windows."""
+"""Captura do microfone e do áudio do Discord no Linux e no Windows."""
 
 from __future__ import annotations
 

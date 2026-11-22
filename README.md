@@ -2,6 +2,8 @@
 
 Transcreve uma chamada do Discord e grava um log de texto enquanto a conversa acontece. Funciona no Linux e no Windows. O programa não entra na chamada como bot.
 
+A página local controla a sessão: iniciar, pausar, continuar e encerrar. Pausar solta o áudio e continua no mesmo log. Encerrar fecha o arquivo. A próxima vez que você inicia abre um log novo.
+
 Duas fontes:
 
 - `eu` — o seu microfone
@@ -10,6 +12,14 @@ Duas fontes:
 No Linux, `eu` é o microfone que o Discord está usando e `discord` é só o áudio do Discord. No Windows, `eu` é o microfone padrão e `discord` é o áudio do processo do Discord. Se o Windows não deixar isolar o processo, a linha `discord` passa a gravar o que sai nos alto-falantes.
 
 As outras pessoas ficam juntas na linha `discord`. O texto é gerado localmente com [faster-whisper](https://github.com/SYSTRAN/faster-whisper).
+
+## Organização
+
+- `discord_stt/capture.py` — microfone e áudio do Discord
+- `discord_stt/engine.py` — modelo de fala e o texto
+- `discord_stt/session.py` — estados parado, ouvindo e pausado
+- `discord_stt/server.py` — página e API em 127.0.0.1
+- `web/` — a interface
 
 ## Requisitos
 
@@ -46,13 +56,15 @@ No Windows, o programa procura `cublas64_12.dll` no ambiente virtual, no conda e
 
 ## Uso
 
-Entre na chamada e inicie.
-
 Linux:
 
 ```bash
 ./iniciar.sh
-tail -f logs/atual.txt
+```
+
+Abra http://127.0.0.1:8765 e use os botões. Para fechar a página e a transcrição:
+
+```bash
 ./parar.sh
 ```
 
@@ -60,17 +72,18 @@ Windows:
 
 ```bat
 iniciar.bat
-powershell -NoProfile -Command "Get-Content -Wait logs\atual.txt"
 parar.bat
 ```
 
-Nos dois sistemas, este comando roda no terminal em vez de ir para segundo plano:
+A página também fica em http://127.0.0.1:8765.
+
+Para transcrever no terminal, sem a página:
 
 ```bash
-python transcrever.py
+python -m discord_stt --sem-interface
 ```
 
-Cada execução cria `logs/chamada-AAAA-MM-DD_HH-MM-SS.txt`. `logs/atual.txt` aponta para o arquivo corrente. No Windows, se o sistema não permitir um atalho, o mesmo texto é escrito direto em `logs/atual.txt`.
+Cada sessão cria `logs/chamada-AAAA-MM-DD_HH-MM-SS.txt`. `logs/atual.txt` aponta para o arquivo corrente. No Windows, se o sistema não permitir um atalho, o mesmo texto é escrito direto em `logs/atual.txt`. Os logs não entram no repositório.
 
 O log fica assim:
 
@@ -79,10 +92,4 @@ O log fica assim:
 [15:04:15] discord: texto de quem você está ouvindo
 ```
 
-Os arquivos de log não entram no repositório.
-
-`--model` aceita `tiny`, `base`, `small` ou `medium`. `--lang` aceita um código como `pt` ou `auto`.
-
-```bash
-python transcrever.py --help
-```
+`--model` aceita `tiny`, `base`, `small` ou `medium`. `--lang` aceita um código como `pt` ou `auto`. A página também escolhe os dois antes de iniciar.

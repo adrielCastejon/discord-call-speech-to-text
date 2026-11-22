@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Transcrição da chamada</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <p class="eyebrow">Discord</p>
+        <h1>Transcrição da chamada</h1>
+      </div>
+      <p class="estado" id="estado"><span class="ponto"></span><span id="estado-texto">Parado</span></p>
+    </header>
+
+    <section class="painel" aria-label="Controles">
+      <div class="botoes">
+        <button type="button" id="iniciar">Iniciar</button>
+        <button type="button" id="pausar">Pausar</button>
+        <button type="button" id="continuar">Continuar</button>
+        <button type="button" id="encerrar" class="quieto">Encerrar</button>
+      </div>
+      <div class="opcoes">
+        <label>Modelo
+          <select id="modelo">
+            <option value="tiny">tiny</option>
+            <option value="base">base</option>
+            <option value="small" selected>small</option>
+            <option value="medium">medium</option>
+          </select>
+        </label>
+        <label>Idioma
+          <input id="idioma" value="pt" maxlength="12" spellcheck="false">
+        </label>
+      </div>
+      <p class="erro" id="erro" hidden></p>
+      <div class="niveis" aria-hidden="true">
+        <div><span>eu</span><i id="nivel-eu"></i></div>
+        <div><span>discord</span><i id="nivel-discord"></i></div>
+      </div>
+    </section>
+
+    <section class="log" id="log" aria-live="polite" aria-label="Texto da chamada">
+      <p class="vazio" id="vazio">Nenhuma fala nesta sessão.</p>
+    </section>
+
+    <footer>
+      <p id="arquivo">O log aparece aqui e também em logs/atual.txt</p>
+      <p id="modelo-desc"></p>
+    </footer>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

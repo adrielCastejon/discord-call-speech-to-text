@@ -8,7 +8,7 @@ fi
 pid="$(cat transcrever.pid)"
 : > parar.pedido
 if kill -0 "$pid" 2>/dev/null; then
-  kill "$pid"
+  kill "$pid" || true
   for _ in 1 2 3 4 5 6 7 8 9 10; do
     if ! kill -0 "$pid" 2>/dev/null; then
       break

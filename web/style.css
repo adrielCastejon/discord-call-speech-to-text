@@ -1,0 +1,151 @@
+:root {
+  color-scheme: dark;
+  --fundo: #14120e;
+  --painel: #221e18;
+  --linha: #3a3329;
+  --texto: #f4efe4;
+  --mudo: #b3a792;
+  --acento: #e0a15a;
+  --perigo: #d46a4c;
+  --eu: #f0d7a4;
+  --discord: #d7e2c8;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--fundo);
+  color: var(--texto);
+  font: 16px/1.45 "Segoe UI", system-ui, sans-serif;
+}
+
+main {
+  width: min(820px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 28px 0 40px;
+}
+
+header, .painel, footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: end;
+}
+
+header { margin-bottom: 18px; }
+
+.eyebrow {
+  margin: 0;
+  color: var(--acento);
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+h1 { margin: 2px 0 0; font-size: 28px; font-weight: 620; }
+
+.estado {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--mudo);
+}
+
+.ponto {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #6d655b;
+}
+
+.estado.ouvindo .ponto { background: #8fbf6a; }
+.estado.pausado .ponto { background: var(--acento); }
+.estado.iniciando .ponto { background: #d8c07a; }
+
+.painel {
+  flex-direction: column;
+  align-items: stretch;
+  background: var(--painel);
+  border: 1px solid var(--linha);
+  border-radius: 16px;
+  padding: 16px;
+}
+
+.botoes, .opcoes, .niveis { display: flex; gap: 10px; flex-wrap: wrap; }
+
+button, select, input {
+  font: inherit;
+  color: var(--texto);
+  background: #2c271f;
+  border: 1px solid var(--linha);
+  border-radius: 999px;
+  padding: 10px 16px;
+}
+
+button { cursor: pointer; }
+button:disabled { opacity: 0.4; cursor: default; }
+#iniciar { background: var(--acento); color: #2a1c0c; border-color: transparent; font-weight: 650; }
+#encerrar { color: var(--perigo); }
+
+.opcoes label { display: flex; flex-direction: column; gap: 6px; color: var(--mudo); font-size: 13px; }
+input { width: 90px; border-radius: 12px; }
+select { border-radius: 12px; }
+
+.erro { margin: 0; color: var(--perigo); }
+.erro[hidden] { display: none; }
+
+.niveis { color: var(--mudo); font-size: 13px; }
+.niveis div { display: flex; align-items: center; gap: 8px; min-width: 180px; }
+.niveis i {
+  display: block;
+  height: 6px;
+  width: 0;
+  max-width: 120px;
+  border-radius: 99px;
+  background: var(--acento);
+}
+
+.log {
+  margin-top: 16px;
+  min-height: 52vh;
+  max-height: 62vh;
+  overflow: auto;
+  border-top: 1px solid var(--linha);
+  padding-top: 12px;
+}
+
+.vazio { color: var(--mudo); }
+
+.fala, .nota {
+  display: grid;
+  grid-template-columns: 78px 78px 1fr;
+  gap: 8px;
+  margin: 0 0 10px;
+}
+
+.nota { grid-template-columns: 78px 1fr; color: var(--mudo); }
+
+.hora { color: var(--mudo); font-variant-numeric: tabular-nums; }
+.rotulo {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.rotulo.eu { color: var(--eu); }
+.rotulo.discord { color: var(--discord); }
+
+footer {
+  margin-top: 14px;
+  color: var(--mudo);
+  font-size: 13px;
+  align-items: start;
+}
+footer p { margin: 0; overflow-wrap: anywhere; }
+
+@media (max-width: 640px) {
+  .fala, .nota { grid-template-columns: 1fr; gap: 2px; }
+  header { flex-direction: column; align-items: start; }
+}
